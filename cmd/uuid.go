@@ -76,7 +76,7 @@ func formatUUID(u [16]byte, noDash, upper bool) string {
 	return s
 }
 
-// uuidAction реализует MenuAction.
+// portAction реализует MenuAction.
 type uuidAction struct{}
 
 func (uuidAction) Label() string {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -18,6 +19,7 @@ const (
 	screenMenu screen = iota
 	screenInput
 	screenResult
+	screenTable
 )
 
 type menuModel struct {
@@ -35,6 +37,13 @@ type menuModel struct {
 	quit         bool
 	width        int
 	height       int
+
+	// состояние табличного экрана
+	table        *TableResult
+	tableCursor  int
+	tableOffset  int
+	tableConfirm bool
+	tableMsg     string
 }
 
 func initialMenu() menuModel {
@@ -102,6 +111,8 @@ func (m menuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateInput(msg)
 		case screenResult:
 			return m.updateResult(msg)
+		case screenTable:
+			return m.updateTable(msg)
 		}
 	}
 	return m, nil
@@ -126,6 +137,25 @@ func (m menuModel) updateMenu(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		a := m.actions[m.cursor]
+
+		// Табличные действия — на интерактивный экран
+		if ta, ok := a.(TableAction); ok {
+			tbl, err := ta.RunTable()
+			if err != nil {
+				m.result = "⚠ " + err.Error()
+				m.initResultView()
+				m.screen = screenResult
+				return m, nil
+			}
+			m.table = tbl
+			m.tableCursor = 0
+			m.tableOffset = 0
+			m.tableConfirm = false
+			m.tableMsg = ""
+			m.screen = screenTable
+			return m, nil
+		}
+
 		if a.Input() == InputText {
 			m.active = a
 			m.input.SetValue("")
@@ -189,6 +219,68 @@ func (m menuModel) updateResult(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m menuModel) updateTable(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.table == nil {
+		m.screen = screenMenu
+		return m, nil
+	}
+
+	// Режим подтверждения действия
+	if m.tableConfirm {
+		switch key.String() {
+		case "y", "Y", "enter":
+			row := m.table.Rows[m.tableCursor]
+			msg, updated, err := m.table.Action(row)
+			if err != nil {
+				m.tableMsg = "⚠ " + err.Error()
+			} else {
+				m.tableMsg = msg
+			}
+			if updated != nil {
+				m.table = updated
+				if m.tableCursor >= len(m.table.Rows) && m.tableCursor > 0 {
+					m.tableCursor = len(m.table.Rows) - 1
+				}
+				if m.tableCursor >= len(m.table.Rows) {
+					m.tableCursor = 0
+				}
+				m.tableOffset = 0
+			}
+			m.tableConfirm = false
+		case "n", "N", "esc":
+			m.tableConfirm = false
+		}
+		return m, nil
+	}
+
+	switch key.String() {
+	case "esc", "q":
+		m.screen = screenMenu
+		m.table = nil
+		m.tableMsg = ""
+		return m, nil
+	case "up", "k":
+		if m.tableCursor > 0 {
+			m.tableCursor--
+		}
+	case "down", "j":
+		if m.tableCursor < len(m.table.Rows)-1 {
+			m.tableCursor++
+		}
+	case "g":
+		m.tableCursor = 0
+	case "G":
+		if len(m.table.Rows) > 0 {
+			m.tableCursor = len(m.table.Rows) - 1
+		}
+	case "enter":
+		if m.table.Action != nil && len(m.table.Rows) > 0 {
+			m.tableConfirm = true
+		}
+	}
+	return m, nil
+}
+
 func (m *menuModel) finish(a MenuAction, res string, err error) {
 	if err != nil {
 		if a.Input() == InputText {
@@ -200,7 +292,12 @@ func (m *menuModel) finish(a MenuAction, res string, err error) {
 		m.result = res
 		m.err = ""
 	}
+	m.initResultView()
+	m.copied = false
+	m.screen = screenResult
+}
 
+func (m *menuModel) initResultView() {
 	w := m.width - 8
 	if w < 20 {
 		w = 20
@@ -212,9 +309,6 @@ func (m *menuModel) finish(a MenuAction, res string, err error) {
 	m.resultView = viewport.New(w, h)
 	m.resultView.SetContent(m.result)
 	m.resultInited = true
-
-	m.copied = false
-	m.screen = screenResult
 }
 
 func (m menuModel) View() string {
@@ -226,6 +320,8 @@ func (m menuModel) View() string {
 		return m.viewInput()
 	case screenResult:
 		return m.viewResult()
+	case screenTable:
+		return m.viewTable()
 	default:
 		return m.viewMenu()
 	}
@@ -367,6 +463,136 @@ func (m menuModel) viewResult() string {
 	return title + "\n" + box + "\n" + errLine + "\n" + hint
 }
 
+func (m menuModel) viewTable() string {
+	t := m.table
+	if t == nil {
+		return ""
+	}
+
+	title := lipgloss.NewStyle().
+		Bold(true).Foreground(lipgloss.Color("#7D56F4")).
+		MarginBottom(1).Render(t.Title)
+
+	if len(t.Rows) == 0 {
+		return title + "\n" + lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555")).
+			Render("пусто") + "\n\n" +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).
+				Render("Esc — назад")
+	}
+
+	// Ширины колонок = максимум из заголовка и ячеек
+	widths := make([]int, len(t.Headers))
+	for i, h := range t.Headers {
+		widths[i] = len(h)
+	}
+	for _, r := range t.Rows {
+		for i, c := range r.Cells {
+			if i < len(widths) && len(c) > widths[i] {
+				widths[i] = len(c)
+			}
+		}
+	}
+
+	// Видимая область
+	visible := m.height - 10
+	if visible < 3 {
+		visible = 3
+	}
+	if visible > len(t.Rows) {
+		visible = len(t.Rows)
+	}
+	if m.tableCursor < m.tableOffset {
+		m.tableOffset = m.tableCursor
+	}
+	if m.tableCursor >= m.tableOffset+visible {
+		m.tableOffset = m.tableCursor - visible + 1
+	}
+	if m.tableOffset < 0 {
+		m.tableOffset = 0
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#7D56F4")).Bold(true)
+	active := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#7D56F4")).Bold(true)
+	normal := lipgloss.NewStyle().Foreground(lipgloss.Color("#CCCCCC"))
+
+	formatRow := func(cells []string) string {
+		s := ""
+		for i, w := range widths {
+			c := ""
+			if i < len(cells) {
+				c = cells[i]
+			}
+			if len(c) > w {
+				c = c[:w]
+			}
+			s += fmt.Sprintf("%-*s ", w, c)
+		}
+		return strings.TrimRight(s, " ")
+	}
+
+	body := header.Render(formatRow(t.Headers)) + "\n"
+	body += lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).
+		Render(strings.Repeat("─", sum(widths)+len(widths))) + "\n"
+
+	for i := m.tableOffset; i < m.tableOffset+visible; i++ {
+		line := formatRow(t.Rows[i].Cells)
+		if i == m.tableCursor {
+			body += active.Render(line) + "\n"
+		} else {
+			body += normal.Render(line) + "\n"
+		}
+	}
+
+	if len(t.Rows) > visible {
+		body += lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555")).
+			Render(fmt.Sprintf("\n  %d–%d из %d",
+				m.tableOffset+1, m.tableOffset+visible, len(t.Rows))) + "\n"
+	}
+
+	var msgLine string
+	if m.tableMsg != "" {
+		color := "#04B575"
+		if strings.HasPrefix(m.tableMsg, "⚠") {
+			color = "#FF5F87"
+		}
+		msgLine = "\n" + lipgloss.NewStyle().
+			Foreground(lipgloss.Color(color)).Render(m.tableMsg) + "\n"
+	}
+
+	var confirmLine string
+	if m.tableConfirm && m.table.Action != nil {
+		row := t.Rows[m.tableCursor]
+		confirmLine = "\n" + lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFAF00")).Bold(true).
+			Render(fmt.Sprintf("%s: %s? [y/N]",
+				t.ActionLabel, strings.Join(row.Cells, " "))) + "\n"
+	}
+
+	actionHint := ""
+	if t.Action != nil {
+		actionHint = fmt.Sprintf(" • Enter — %s", t.ActionLabel)
+	}
+
+	hint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#555555")).MarginTop(1).
+		Render("↑/↓ — выбор" + actionHint + " • Esc — назад")
+
+	return title + "\n" + body + msgLine + confirmLine + hint
+}
+
+func sum(xs []int) int {
+	s := 0
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+
 func runMenu() {
 	p := tea.NewProgram(initialMenu(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -377,7 +603,7 @@ func runMenu() {
 
 var menuCmd = &cobra.Command{
 	Use:   "menu",
-	Short: "Интерактивное цветное меню",
+	Short: "Быстрые команды",
 	Run: func(cmd *cobra.Command, args []string) {
 		runMenu()
 	},

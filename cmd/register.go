@@ -17,7 +17,25 @@ type MenuAction interface {
 	Run(input string) (string, error)
 }
 
+type TableAction interface {
+	MenuAction
+	RunTable() (*TableResult, error)
+}
+
 var registry []MenuAction
+
+type TableRow struct {
+	Cells []string
+	Data  any
+}
+
+type TableResult struct {
+	Title       string
+	Headers     []string
+	Rows        []TableRow
+	Action      func(row TableRow) (msg string, updated *TableResult, err error)
+	ActionLabel string
+}
 
 func RegisterAction(a MenuAction) {
 	registry = append(registry, a)
