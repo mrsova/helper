@@ -51,6 +51,14 @@ func (timestampAction) Run(input string) (string, error) {
 	return out, nil
 }
 
+func (timestampAction) Preview(input string) string {
+	out, err := parseUnixTimestamp(input)
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
 func parseUnixTimestamp(input string) (string, error) {
 	input = strings.TrimSpace(input)
 

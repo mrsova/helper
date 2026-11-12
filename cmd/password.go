@@ -187,6 +187,18 @@ func (passwordAction) Run(input string) (string, error) {
 	return generatePassword(length, true, true, true, true)
 }
 
+func (passwordAction) Preview(input string) string {
+	length, err := passLengthFromInput(input)
+	if err != nil {
+		return err.Error()
+	}
+	out, err := generatePassword(length, true, true, true, true)
+	if err != nil {
+		return err.Error()
+	}
+	return out
+}
+
 func init() {
 	passwordCmd.Flags().IntVarP(&passLength, "length", "l", defaultPass, "длина пароля")
 	passwordCmd.Flags().BoolVar(&passUpper, "upper", true, "заглавные буквы")
