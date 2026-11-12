@@ -44,6 +44,9 @@ type menuModel struct {
 	tableOffset  int
 	tableConfirm bool
 	tableMsg     string
+
+	// живой предпросмотр под полем ввода
+	preview string
 }
 
 func initialMenu() menuModel {
@@ -162,6 +165,7 @@ func (m menuModel) updateMenu(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = a.Placeholder()
 			m.err = ""
 			m.copied = false
+			m.preview = ""
 			m.screen = screenInput
 			return m, m.input.Focus()
 		}
@@ -186,6 +190,11 @@ func (m menuModel) updateInput(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(key)
+
+	if pa, ok := m.active.(PreviewAction); ok {
+		m.preview = pa.Preview(m.input.Value())
+	}
+
 	return m, cmd
 }
 
@@ -413,6 +422,20 @@ func (m menuModel) viewInput() string {
 		BorderForeground(lipgloss.Color("#7D56F4")).
 		Padding(0, 1).Render(m.input.View())
 
+	var previewBlock string
+	if m.preview != "" {
+		color := "#04B575"
+		if strings.HasPrefix(m.preview, "⚠") {
+			color = "#FF5F87"
+		}
+		previewBlock = "\n" + lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
+			BorderForeground(lipgloss.Color(color)).
+			PaddingLeft(1).
+			Foreground(lipgloss.Color(color)).
+			Render(m.preview) + "\n"
+	}
+
 	var errLine string
 	if m.err != "" {
 		errLine = "\n" + lipgloss.NewStyle().
@@ -424,7 +447,7 @@ func (m menuModel) viewInput() string {
 		Foreground(lipgloss.Color("#555555")).MarginTop(1).
 		Render("Enter — выполнить • Esc — назад • Ctrl+C — выход")
 
-	return title + "\n" + prompt + "\n\n" + inputView + "\n" + errLine + hint
+	return title + "\n" + prompt + "\n\n" + inputView + previewBlock + errLine + hint
 }
 
 func (m menuModel) viewResult() string {

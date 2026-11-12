@@ -22,6 +22,11 @@ type TableAction interface {
 	RunTable() (*TableResult, error)
 }
 
+type PreviewAction interface {
+	MenuAction
+	Preview(input string) string
+}
+
 var registry []MenuAction
 
 type TableRow struct {
