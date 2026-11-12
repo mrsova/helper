@@ -15,6 +15,8 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() {
+	cobra.MousetrapHelpText = ""
+
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)
