@@ -192,10 +192,12 @@ func (passwordAction) Preview(input string) string {
 	if err != nil {
 		return err.Error()
 	}
+
 	out, err := generatePassword(length, true, true, true, true)
 	if err != nil {
 		return err.Error()
 	}
+
 	return out
 }
 
