@@ -168,7 +168,7 @@ func (passwordAction) Label() string {
 }
 
 func (passwordAction) Order() int {
-	return 16
+	return 4
 }
 
 func (passwordAction) Input() InputMode {

@@ -251,7 +251,7 @@ func (jwtAction) Label() string {
 }
 
 func (jwtAction) Order() int {
-	return 45
+	return 5
 }
 
 func (jwtAction) Input() InputMode {
